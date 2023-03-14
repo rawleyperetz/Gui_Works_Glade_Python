@@ -4,9 +4,13 @@ gi.require_version("Gtk","3.0")
 from gi.repository import Gtk
 import caesarCipher
 import socket 
+from time import sleep
+import sys
+import errno
+import threading 
+
 
 client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
 @Gtk.Template(filename="FWindow.ui")
 class FirstWindow(Gtk.Window):
     __gtype_name__= "FWindow"
@@ -48,18 +52,30 @@ class FirstWindow(Gtk.Window):
     def let_button_clicked(self, widget):
         self.user_val = self.user.get_text()
         self.port_val = int(self.port.get_text())
+        print(self.user_val, 'and', self.port_val)
+        # print(type(self.user_val), 'and', type(self.port_val))
         if self.user_val == '' or self.port_val == '':
             print('All Fields must be filled')
-        try:
-            client_socket.bind((socket.gethostname(), self.port_val))
-            client_socket.listen()
-        except:
-            print(f'Shit I encountered an error')
+        #try:
+        
+        client_socket.bind(('', self.port_val))
+        client_socket.listen(1)
+        global cs
+        cs, address = client_socket.accept()
+        print('Connection established with {}'.format(str(address[0])))
+        # sleep(10)
+        # #except Exception as e:
+        # print(f'Shit I encountered an error ')
         window.destroy()
         swindow = ChatWindow()
         swindow.connect("delete-event",Gtk.main_quit)
         swindow.show()
-
+        sleep(30)
+        swindow.run()
+        
+        
+        
+ 
 ##############################################
 #Second window
 ##############################################
@@ -77,28 +93,68 @@ class ChatWindow(Gtk.Window):
         self.set_border_width(20)
         self.set_size_request(600,500)
         self.msg = ""
+        self.old_caesar = ""
         self.init_template()
-    
-        incoming_msg = client_socket.recv(50)
-        if incoming_msg != '':
-            self.txt_one.get_buffer().set_text(incoming_msg+"\n")
-            self.txt_two.get_buffer().set_text(">" + "\n")
-    
+        # print()
+        # try:
+        #     incoming_msg = client_socket.recv(50)
+        #     if incoming_msg != '':
+        #         self.txt_one.get_buffer().set_text(incoming_msg+"\n")
+        #         self.txt_two.get_buffer().set_text(">" + "\n")
+        # except:
+        #     print('Not connected')
+
     @Gtk.Template.Callback()
-    def send_button_clicked(self,widget):
-        chat_txt = self.chat.get_text()
-        client_socket.send(caesarCipher.caesarEncrypt(chat_txt,3))
-        self.msg = self.msg + '> ' + chat_txt + "\n"
-        self.txt_two.get_buffer().set_text(self.msg)
-        self.txt_one.get_buffer().set_text(caesarCipher.caesarEncrypt(self.msg,3)+"\n")
-        if chat_txt == 'exit':
-            client_socket.close()
-            print("Wir sind fertig")
-            Gtk.main_quit()
+    def send_button_clicked(self, widget):
+        try:
+            self.chat_txt = self.chat.get_text()
+            if self.chat_txt == 'exit':
+                cs.close()
+                print("Wir sind fertig")
+                Gtk.main_quit()
+            # client_socket.send(self.txt_one.get_text())
+            self.msg = self.msg + '> ' + self.chat_txt + "\n"
+            self.txt_two.get_buffer().set_text(self.msg)
+            caesar = caesarCipher.caesarEncrypt(self.chat_txt,3)
+            self.old_caesar = self.old_caesar + caesar + "\n"
+            self.txt_one.get_buffer().set_text(self.old_caesar+"\n")
+            #client_socket.send(bytes(caesarCipher.caesarEncrypt(chat_txt,3), "utf-8"))
+            cs.send(bytes(caesar,'utf-8'))
+        except Exception as e:
+            print('Error occurred: {}'.format(str(e)))
+            cs.close()
+            sys.exit()
     
     @Gtk.Template.Callback()
     def exit_button_clicked(self, widget):
         Gtk.main_quit()
+    
+    def receiving(self):
+        while True:
+            try:    
+                rmsg = cs.recv(20).decode('utf-8') #inc_header = cs.recv(20)
+                # msg_len = int(inc_header.decode('utf-8').strip())
+                # msg = cs.recv(msg_len).decode('utf-8')
+                #print('shut up')
+                if rmsg != '':
+                    self.msg = self.msg + rmsg + "\n"
+                    self.old_caesar = self.old_caesar + rmsg + "\n"
+                    self.txt_one.get_buffer().set_text(self.old_caesar+"\n")
+                    self.txt_two.get_buffer().set_text(">" + self.msg + "\n")
+
+            except IOError as e:
+                if e.errno != errno.EAGAIN and e.errno != errno.EWOULDBLOCK:
+                    print('Reading error:{}'.format(str(e)))
+                    sys.exit()
+                continue
+
+            except Exception as e:
+                print('Reading error2:{}'.format(str(e)))
+                sys.exit()
+    
+    def run(self):
+        thread = threading.Thread(daemon=True, target=self.receiving)#, args=[self.in_seconds])
+        thread.start()
         
 
 ##############################################
@@ -108,5 +164,7 @@ window = FirstWindow()
 window.connect("delete-event",Gtk.main_quit)
 
 window.show()
+
+
 
 Gtk.main()
